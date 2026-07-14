@@ -14,5 +14,7 @@ wheels/
 .vscode/
 .idea/
 
-# Banco de dados
-banco_de_dados_animes_limpo.csv
+
+# Arquivos da apple
+
+.DStore
