@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Anime VAE Upsampler</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 { margin-bottom: 20px; }
+        .search-container {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+        input[type="text"] {
+            padding: 10px;
+            width: 350px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            background: #1e1e1e;
+            color: #fff;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        button:hover { background: #45a049; }
+        
+        .images-container {
+            display: flex;
+            gap: 40px;
+            margin-bottom: 40px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .image-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #1e1e1e;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #333;
+        }
+        .image-box img {
+            width: 200px;
+            height: 200px;
+            background: #000;
+            border: 1px solid #444;
+            object-fit: contain;
+        }
+        #img-pequena { image-rendering: pixelated; }
+        
+        .image-title { margin-top: 10px; font-weight: bold; color: #aaa; }
+        
+        .sliders-section {
+            width: 100%;
+            max-width: 1000px;
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #333;
+        }
+        
+        /* Novo layout para o cabeçalho dos sliders com o botão de Reset */
+        .sliders-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #333;
+        }
+        .sliders-header h3 { margin: 0; }
+        .btn-reset {
+            background-color: #d32f2f;
+        }
+        .btn-reset:hover {
+            background-color: #b71c1c;
+        }
+
+        .sliders-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+            padding-right: 10px;
+        }
+        .slider-item {
+            display: flex;
+            flex-direction: column;
+            font-size: 0.8rem;
+        }
+        .slider-item span {
+            color: #888;
+            margin-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+        }
+        input[type=range] { width: 100%; }
+        
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <h1>Anime VAE Upsampler - Latent Space</h1>
+    
+    <div class="search-container">
+        <input type="text" id="search-input" list="anime-suggestions" placeholder="Digite o nome do anime (ex: Naruto)" oninput="buscarSugestoes(this.value)">
+        <datalist id="anime-suggestions"></datalist>
+        <button onclick="buscarAnime()">Pesquisar</button>
+    </div>
+
+    <div class="images-container">
+        <div class="image-box">
+            <img id="img-original" src="" alt="Aguardando pesquisa...">
+            <div class="image-title">1. Anime Real (200x200)</div>
+        </div>
+        <div class="image-box">
+            <img id="img-pequena" src="" alt="Aguardando pesquisa...">
+            <div class="image-title">2. Redução (10x10)</div>
+        </div>
+        <div class="image-box">
+            <img id="img-reconstruida" src="" alt="Aguardando pesquisa...">
+            <div class="image-title">3. Output VAE (200x200)</div>
+        </div>
+    </div>
+
+    <div class="sliders-section" id="sliders-section" style="display: none;">
+        <div class="sliders-header">
+            <h3>Espaço Latente (Ajuste para ver a Rede Neural "imaginando")</h3>
+            <button class="btn-reset" onclick="resetarSliders()">Resetar Valores</button>
+        </div>
+        <div class="sliders-grid" id="sliders-grid">
+            <!-- Sliders injetados via JS -->
+        </div>
+    </div>
+
+    <script>
+        let latentVector = [];
+        let originalLatentVector = []; 
+        let imgReconstruidaOriginal = ''; // Nova variável para guardar a imagem inicial
+        let debounceTimeout = null;
+        let timeoutSugestoes = null;
+
+        async function buscarSugestoes(query) {
+            if (query.length < 2) return; 
+            
+            clearTimeout(timeoutSugestoes);
+            timeoutSugestoes = setTimeout(async () => {
+                try {
+                    const response = await fetch('/autocomplete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ query: query })
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const datalist = document.getElementById('anime-suggestions');
+                        datalist.innerHTML = ''; 
+                        
+                        data.sugestoes.forEach(nome => {
+                            const option = document.createElement('option');
+                            option.value = nome;
+                            datalist.appendChild(option);
+                        });
+                    }
+                } catch (error) {
+                    console.error("Erro no autocomplete:", error);
+                }
+            }, 300); 
+        }
+
+        async function buscarAnime() {
+            const query = document.getElementById('search-input').value;
+            if (!query) return;
+
+            document.getElementById('img-original').src = '';
+            document.getElementById('img-pequena').src = '';
+            document.getElementById('img-reconstruida').src = '';
+
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: query })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('img-original').src = 'data:image/png;base64,' + data.img_original;
+                    document.getElementById('img-pequena').src = 'data:image/png;base64,' + data.img_pequena;
+                    document.getElementById('img-reconstruida').src = 'data:image/png;base64,' + data.img_reconstruida;
+                    
+                    // Salva os dados para os sliders
+                    latentVector = [...data.z];
+                    originalLatentVector = [...data.z]; 
+                    
+                    // Salva a string da imagem perfeita original para o Reset
+                    imgReconstruidaOriginal = data.img_reconstruida; 
+                    
+                    gerarSliders();
+                    document.getElementById('sliders-section').style.display = 'block';
+                } else {
+                    alert(data.error || 'Erro ao buscar anime.');
+                }
+            } catch (error) {
+                console.error("Erro:", error);
+                alert("Erro de comunicação com o servidor.");
+            }
+        }
+
+        function gerarSliders() {
+            const grid = document.getElementById('sliders-grid');
+            grid.innerHTML = ''; 
+            
+            latentVector.forEach((valor, index) => {
+                const item = document.createElement('div');
+                item.className = 'slider-item';
+                
+                const label = document.createElement('span');
+                label.innerHTML = `Dim ${index} <b id="val-${index}">${valor.toFixed(2)}</b>`;
+                
+                const slider = document.createElement('input');
+                slider.type = 'range';
+                slider.id = `slider-${index}`;
+                slider.min = '-20'; 
+                slider.max = '20';
+                slider.step = '0.1';
+                slider.value = valor;
+                
+                slider.addEventListener('input', (e) => {
+                    const novoValor = parseFloat(e.target.value);
+                    latentVector[index] = novoValor;
+                    document.getElementById(`val-${index}`).innerText = novoValor.toFixed(2);
+                    agendarAtualizacao();
+                });
+
+                item.appendChild(label);
+                item.appendChild(slider);
+                grid.appendChild(item);
+            });
+        }
+
+        function resetarSliders() {
+            if (originalLatentVector.length === 0) return;
+
+            // 1. Cancela qualquer pedido pro servidor que esteja na fila
+            clearTimeout(debounceTimeout);
+
+            // 2. Restaura o array com os valores originais
+            latentVector = [...originalLatentVector];
+
+            // 3. Atualiza o visual das barras no HTML
+            latentVector.forEach((valor, index) => {
+                const slider = document.getElementById(`slider-${index}`);
+                if (slider) {
+                    slider.value = valor;
+                    document.getElementById(`val-${index}`).innerText = valor.toFixed(2);
+                }
+            });
+
+            // 4. Devolve a imagem exata do início INSTANTANEAMENTE (sem chamar o Python)
+            document.getElementById('img-reconstruida').src = 'data:image/png;base64,' + imgReconstruidaOriginal;
+        }
+
+        function agendarAtualizacao() {
+            clearTimeout(debounceTimeout);
+            debounceTimeout = setTimeout(enviarNovoLatente, 100); 
+        }
+
+        async function enviarNovoLatente() {
+            try {
+                const response = await fetch('/decode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ z: latentVector })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('img-reconstruida').src = 'data:image/png;base64,' + data.img_reconstruida;
+                }
+            } catch (error) {
+                console.error("Erro na atualização:", error);
+            }
+        }
+    </script>
+</body>
+</html>
